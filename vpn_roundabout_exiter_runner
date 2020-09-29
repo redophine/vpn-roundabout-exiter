@@ -1,0 +1,61 @@
+#!/bin/bash
+
+isp_ip=$1
+vpn_init_timeout=15
+vpn_ip_check_timeout=3
+vpn_timeout=45
+service_halt_timeout=5
+start_time=$(date +%s)
+ip_service=https://ipinfo.io
+
+function getWanIp() {
+    response="$(curl --silent $ip_service)"
+    wan_ip="$(echo "$response" | jq -r .ip)"
+}
+
+function getNewVPNIP() {
+    echo current ip "$wan_ip" isp_ip "$isp_ip"
+    echo "killall openvpn"
+    killall -9 openvpn
+    sleep 3
+    while [ "$isp_ip" == "$wan_ip" ]; do
+        echo isp ip detected, triggering change!
+        ovpn=$(find /etc/openvpn/ -name *.ovpn | shuf -n1)
+        echo attempting "$ovpn"
+        openvpn --daemon --config "$ovpn" --auth-user-pass /etc/openvpn/auth
+        echo waiting for openvpn to initialise for $vpn_init_timeout seconds
+        sleep $vpn_init_timeout
+        getWanIp
+    done
+}
+
+resetServiceStartTime() {
+    echo reset service start_time
+    start_time="$(date +%s)"
+}
+
+monitorWANIP() {
+    echo wan_ip details "$response"
+    resetServiceStartTime
+    while [ "$(date +%s)" -lt $(("$start_time" + "$vpn_timeout")) ]; do
+        getWanIp
+        if [ "$isp_ip" != "$wan_ip" ]; then
+            echo wan_ip changed, vpn_timeout in $(("$start_time" + "$vpn_timeout" - "$(date +%s)")) seconds
+            sleep $vpn_ip_check_timeout
+        else
+            echo abnormal behaviour detected: isp_ip
+            getNewVPNIP
+            resetServiceStartTime
+        fi
+    done
+    echo reset wan_ip at timeout
+    getNewVPNIP
+}
+
+while true; do
+    echo \*\*\* starting vpn roundabout exiter at $(date) \*\*\*
+
+    getWanIp
+    getNewVPNIP
+    monitorWANIP
+done
